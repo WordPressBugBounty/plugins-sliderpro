@@ -3,8 +3,8 @@ Contributors: bqworks
 Donate link: https://bqworks.net/premium-add-ons/
 Tags: slider, post slider, content slider, responsive slider, touch slider, carousel slider, image slider, thumbnail scroller, lightbox slider, animated layers, full width
 Requires at least: 4.0
-Tested up to: 6.6
-Stable tag: 4.8.12
+Tested up to: 6.9
+Stable tag: 4.8.13
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -85,6 +85,10 @@ When you select an image from the Media Library, in the right columns, under 'AT
 10. Adding dynamic tags for sliders generated from posts.
 
 == Changelog ==
+
+= 4.8.13 =
+* sanitize shortcode elements, to prevent JavaScript code
+added by users who have permission to add content
 
 = 4.8.12 =
 * patch fancybox script, to disallow html content in captions
