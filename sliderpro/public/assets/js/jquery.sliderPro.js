@@ -1,5 +1,5 @@
 /*!
-*  - v1.5.0
+*  - v1.6.3
 * Homepage: https://bqworks.net/slider-pro/
 * Author: bqworks
 * Author URL: https://bqworks.net/
@@ -45,7 +45,7 @@
 		this.slides = [];
 
 		// Array of SliderProSlide objects, ordered by their left/top position in the slider.
-		// This will be updated continuously if the slider is loopable.
+		// This will be updated continuously if the slider is loop-able.
 		this.slidesOrder = [];
 
 		// Holds the options passed to the slider when it was instantiated
@@ -120,6 +120,11 @@
 		// Property used for deferring the resizing of the slider
 		this.allowResize = true;
 
+		// Indicates if the slides are being resized and if the images loaded in the meantime
+		// require the slides to be repositioned once the resizing is complete
+		this._isResizingSlides = false;
+		this._imageLayoutPending = false;
+
 		// Unique ID to be used for event listening
 		this.uniqueId = new Date().valueOf();
 
@@ -131,6 +136,9 @@
 
 		// An array of shuffled indexes, based on which the slides will be shuffled
 		this.shuffledIndexes = [];
+
+		// Stores references to the created timers
+		this.timers = {};
 
 		// Initialize the slider
 		this._init();
@@ -273,7 +281,9 @@
 			
 				that.allowResize = false;
 
-				setTimeout(function() {
+				that.timers.allowResize = setTimeout(function() {
+					delete that.timers.allowResize;
+
 					that.resize();
 					that.allowResize = true;
 				}, 200 );
@@ -382,11 +392,18 @@
 
 			slide.on( 'imagesLoaded.' + NS, function( event ) {
 				if ( that.settings.autoSlideSize === true ) {
-					if ( that.$slides.hasClass( 'sp-animated' ) === false ) {
-						that._resetSlidesPosition();
-					}
 
-					that._calculateSlidesSize();
+					// If the slides are being resized, reposition them only once, after all
+					// the slides were resized, instead of after each loaded image
+					if ( that._isResizingSlides === true ) {
+						that._imageLayoutPending = true;
+					} else {
+						if ( that.$slides.hasClass( 'sp-animated' ) === false ) {
+							that._resetSlidesPosition();
+						}
+
+						that._calculateSlidesSize();
+					}
 				}
 
 				if ( that.settings.autoHeight === true && event.index === that.selectedSlideIndex ) {
@@ -599,7 +616,11 @@
 			
 			// Initially set the slide width to the size of the slider.
 			// Later, this will be set to less if there are multiple visible slides.
-			this.slideWidth = this.$slider.width();
+			if ( this.settings.fade === true ) {
+				this.slideWidth = this.$slider.width();
+			} else {
+				this.slideWidth = Math.round( this.$slider.width() );
+			}
 
 			// Set the height to the same size as the browser window if the slider is set to be 'fullWindow',
 			// or calculate the height based on the width and the aspect ratio.
@@ -696,9 +717,28 @@
 			}
 
 			// Loop through the existing slides and reset their size.
+			// Images that are already loaded will notify immediately, while the slides
+			// are being resized, so their repositioning is deferred until the loop ends.
+			this._isResizingSlides = true;
+
 			$.each( this.slides, function( index, element ) {
 				element.setSize( slideWidth, slideHeight );
 			});
+
+			this._isResizingSlides = false;
+
+			// Reposition the slides once, if any image loaded while the slides were resized.
+			// This is done here, and not only in 'resize', because the thumbnails module
+			// calls '_resizeSlides' directly.
+			if ( this._imageLayoutPending === true ) {
+				this._imageLayoutPending = false;
+
+				if ( this.$slides.hasClass( 'sp-animated' ) === false ) {
+					this._resetSlidesPosition();
+				}
+
+				this._calculateSlidesSize();
+			}
 		},
 
 		// Resize the height of the slider to the height of the selected slide.
@@ -725,7 +765,7 @@
 			this.$slides.find( '.sp-selected' ).removeClass( 'sp-selected' );
 			this.$slides.find( '.sp-slide' ).eq( this.selectedSlideIndex ).addClass( 'sp-selected' );
 
-			// If the slider is loopable reorder the slides to have the selected slide in the middle
+			// If the slider is loop-able reorder the slides to have the selected slide in the middle
 			// and update the slides' position.
 			if ( this.settings.loop === true ) {
 				this._updateSlidesOrder();
@@ -933,6 +973,11 @@
 
 			this.slides.length = 0;
 
+			for ( var timerName in this.timers ) {
+				clearTimeout( this.timers[ timerName ] );
+				delete this.timers[ timerName ];
+			}
+
 			// Move the slides to their initial position in the DOM and 
 			// remove the container elements created dynamically.
 			this.$slides.prependTo( this.$slider );
@@ -1029,7 +1074,7 @@
 			// Indicates if the size of the slider will be forced to 'fullWidth' or 'fullWindow'
 			forceSize: 'none',
 
-			// Indicates if the slider will be loopable
+			// Indicates if the slider will be loop-able
 			loop: true,
 
 			// The distance between slides
@@ -1315,6 +1360,10 @@
 				}
 			} else if ( this.settings.autoHeight === true ) {
 				this.$mainImage.css({ width: '100%', height: 'auto' });
+
+				if ( this.settings.centerImage === true ) {
+					this.$mainImage.css({ 'marginLeft': ( this.$imageContainer.width() - this.$mainImage.width() ) * 0.5 });
+				}
 			} else {
 				if ( this.settings.imageScaleMode === 'cover' ) {
 					if ( this.$mainImage.width() / this.$mainImage.height() <= this.$slide.width() / this.$slide.height() ) {
@@ -4401,9 +4450,79 @@
 	
 })( window, jQuery );
 
+;( function( window, $ ) {
+
+    "use strict";
+
+    var NS = 'MouseWheel.' + $.SliderPro.namespace;
+
+    var MouseWheel = {
+
+        mouseWheelEventType: '',
+
+        initMouseWheel: function() {
+            var that = this;
+
+            if ( this.settings.mouseWheel === false ) {
+                return;
+            }
+
+            // get the current mouse wheel event used in the browser
+            if ( 'onwheel' in document ) {
+                this.mouseWheelEventType = 'wheel';
+            } else if ( 'onmousewheel' in document ) {
+                this.mouseWheelEventType = 'mousewheel';
+            } else if ( 'onDomMouseScroll' in document ) {
+                this.mouseWheelEventType = 'DomMouseScroll';
+            } else if ( 'onMozMousePixelScroll' in document ) {
+                this.mouseWheelEventType = 'MozMousePixelScroll';
+            }
+
+            this.on( this.mouseWheelEventType + '.' + NS, function( event ) {
+                event.preventDefault();
+
+                var eventObject = event.originalEvent,
+                    delta;
+
+                // get the movement direction and speed indicated in the delta property
+                if ( typeof eventObject.detail !== 'undefined' ) {
+                    delta = eventObject.detail;
+                }
+
+                if ( typeof eventObject.wheelDelta !== 'undefined' ) {
+                    delta = eventObject.wheelDelta;
+                }
+
+                if ( typeof eventObject.deltaY !== 'undefined' ) {
+                    delta = eventObject.deltaY * -1;
+                }
+
+                if ( that.thumbnailsPosition + delta < 0 && that.thumbnailsPosition + delta > that.thumbnailsContainerSize - that.thumbnailsSize ) {
+                   that._moveThumbnailsTo( that.thumbnailsPosition + delta, true );
+                } else if ( that.thumbnailsPosition + delta >= 0 ) {
+                    that._moveThumbnailsTo( 0, true );
+                } else if ( that.thumbnailsPosition + delta < that.thumbnailsContainerSize - that.thumbnailsSize ) {
+                    that._moveThumbnailsTo( that.thumbnailsContainerSize - that.thumbnailsSize, true );
+                }
+            });
+        },
+
+        destroyMouseWheel: function() {
+            this.off( this.mouseWheelEventType + '.' + NS );
+        },
+
+        mouseWheelDefaults: {
+            mouseWheel: false
+        }
+    };
+
+    $.SliderPro.addModule( 'MouseWheel', MouseWheel );
+
+})( window, jQuery );
+
 // Full Screen module for Slider Pro.
 // 
-// Adds the possibility to open the slider full-screen, using the HMTL5 FullScreen API.
+// Adds the possibility to open the slider full-screen, using the HTML5 FullScreen API.
 ;(function( window, $ ) {
 
 	"use strict";
@@ -4541,6 +4660,7 @@
 
 })( window, jQuery );
 
+
 // Buttons module for Slider Pro.
 // 
 // Adds navigation buttons at the bottom of the slider.
@@ -4674,8 +4794,8 @@
 			if ( this.settings.arrows === true && this.$arrows === null ) {
 				this.$arrows = $( '<div class="sp-arrows"></div>' ).appendTo( this.$slidesContainer );
 				
-				this.$previousArrow = $( '<div class="sp-arrow sp-previous-arrow"></div>' ).appendTo( this.$arrows );
-				this.$nextArrow = $( '<div class="sp-arrow sp-next-arrow"></div>' ).appendTo( this.$arrows );
+				this.$previousArrow = $( this.settings.previousArrow ).appendTo( this.$arrows );
+				this.$nextArrow = $( this.settings.nextArrow ).appendTo( this.$arrows );
 
 				this.$previousArrow.on( 'click.' + NS, function() {
 					that.previousSlide();
@@ -4739,7 +4859,13 @@
 			arrows: false,
 
 			// Indicates whether the arrows will fade in only on hover
-			fadeArrows: true
+			fadeArrows: true,
+
+			// Previous arrow html.
+			previousArrow: '<div class="sp-arrow sp-previous-arrow"></div>',
+
+			// Next arrow html.
+			nextArrow: '<div class="sp-arrow sp-next-arrow"></div>'
 		}
 	};
 
@@ -4809,12 +4935,12 @@
 			
 				// Add the grabbing icon
 				this.$thumbnails.addClass( 'sp-grab' );
-			}
 
-			// Remove the default thumbnailClick
-			$.each( this.thumbnails, function( index, thumbnail ) {
-				thumbnail.off( 'thumbnailClick' );
-			});
+				// Remove the default thumbnailClick
+				$.each( this.thumbnails, function( index, thumbnail ) {
+					thumbnail.off( 'thumbnailClick' );
+				});
+			}
 		},
 
 		// Called when the thumbnail scroller starts being dragged
